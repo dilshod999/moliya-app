@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+model User {
+  id           Int           @id @default(autoincrement())
+  telegramId   BigInt        @unique @map("telegram_id")
+  firstName    String?       @map("first_name")
+  username     String?
+  currency     String        @default("UZS")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  transactions Transaction[]
+
+  @@map("users")
+}
+
+model Category {
+  id           Int              @id @default(autoincrement())
+  name         String
+  type         TransactionType
+  icon         String
+  color        String
+  createdAt    DateTime         @default(now()) @map("created_at")
+  transactions Transaction[]
+
+  @@map("categories")
+}
+
+model Transaction {
+  id         Int              @id @default(autoincrement())
+  userId     Int              @map("user_id")
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount     Decimal          @db.Decimal(14, 2)
+  type       TransactionType
+  categoryId Int              @map("category_id")
+  category   Category         @relation(fields: [categoryId], references: [id])
+  note       String?
+  date       DateTime         @default(now())
+  createdAt  DateTime         @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([date])
+  @@map("transactions")
+}
