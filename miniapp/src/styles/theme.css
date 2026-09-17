@@ -1,0 +1,79 @@
+:root {
+  --bg: #ffffff;
+  --surface: #f6f7f9;
+  --surface-raised: #ffffff;
+  --border: #e8e9ec;
+  --text: #14181f;
+  --text-muted: #767c88;
+  --income: #0ea5a0;
+  --income-soft: #e3f6f4;
+  --expense: #f2542d;
+  --expense-soft: #fdece6;
+  --accent: #4f46e5;
+  --accent-soft: #edecfb;
+  --radius-lg: 22px;
+  --radius-md: 16px;
+  --radius-sm: 12px;
+  --radius-pill: 999px;
+  --font-display: "Manrope", sans-serif;
+  --font-body: "Inter", sans-serif;
+  --shadow-card: 0 1px 2px rgba(20, 24, 31, 0.04), 0 8px 24px rgba(20, 24, 31, 0.05);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+button {
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+
+.app-shell {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  position: relative;
+}
+
+.screen {
+  flex: 1;
+  padding: 20px 18px 96px;
+  overflow-y: auto;
+}
+
+.card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 18px;
+}
