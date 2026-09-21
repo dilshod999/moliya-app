@@ -1,3 +1,4 @@
+
 const TelegramBot = require("node-telegram-bot-api");
 const prisma = require("./lib/prisma");
 
@@ -17,7 +18,7 @@ bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   bot.sendMessage(
     chatId,
-    "👋 Moliya Nazorati botiga xush kelibsiz!\n\nKirim va chiqimlaringizni Mini App orqali oson boshqaring.\n\nYoki istalgan xabarni (masalan, boshqa botdan kelgan chek/xarajat xabarini) menga forward qiling — men undan summani topib, kategoriyasini so'rab, avtomatik chiqim sifatida saqlayman.",
+    "👋 Moliya Nazorati botiga xush kelibsiz!\n\nKirim va chiqimlaringizni Mini App orqali oson boshqaring.\n\nYoki istalgan xabarni (masalan, bank/boshqa botdan kelgan chek xabarini) menga forward qiling — men undan summani topib, kategoriyasini so'rab, avtomatik saqlayman.",
     {
       reply_markup: {
         inline_keyboard: [[{ text: "📱 Ilovani ochish", web_app: { url: miniAppUrl } }]],
@@ -51,25 +52,46 @@ async function notifyTransactionSaved(telegramId, transaction) {
 
 // --- Forward-to-categorize flow -------------------------------------------
 //
-// The user forwards an arbitrary message (from another bot, a channel, or
-// just types free text) into this bot. Since the incoming format is never
-// the same twice, we don't try to fully parse it — we just pull out the
-// biggest number in the text as the amount, then ask the user which
-// expense category it belongs to via inline buttons.
+// The user forwards an arbitrary message (from another bot, a bank
+// notification, a channel, or just types free text) into this bot. Since
+// the incoming format is never the same twice, we don't try to fully parse
+// it — we look for a number marked with ➖ (debit) or ➕ (credit), which is
+// the standard pattern bank notifications use, and fall back to the
+// largest plain number in the text if no marker is found. Then we ask the
+// user which category it belongs to via inline buttons.
 
-// token -> { telegramId, chatId, amount, note }
+// token -> { telegramId, chatId, amount, note, type }
 const pendingCategoryChoice = new Map();
 // chatId -> { telegramId, note } — set when we couldn't find an amount and
 // are waiting for the user's next message to contain just the number.
 const pendingAmountOnly = new Map();
 
+function parseAmountToken(raw) {
+  // Handles "132.000,00" (dot = thousands, comma = decimals), "50000",
+  // "50 000", "50,000.00", etc. We only care about the whole-number part.
+  const cleaned = raw.replace(/\s/g, "");
+  const decimalMatch = cleaned.match(/[.,](\d{1,2})$/);
+  let integerPart = decimalMatch ? cleaned.slice(0, cleaned.length - decimalMatch[0].length) : cleaned;
+  integerPart = integerPart.replace(/[.,\s]/g, "");
+  const num = parseInt(integerPart, 10);
+  return Number.isFinite(num) && num > 0 ? num : null;
+}
+
 function extractAmount(text) {
+  // 1) Bank-style marker: "➖ 132.000,00 UZS" or "➕ 50000"
+  const markedMatch = text.match(/([➖➕])[^\d]{0,10}(\d[\d\s.,]*\d|\d+)/);
+  if (markedMatch) {
+    const amount = parseAmountToken(markedMatch[2]);
+    if (amount) {
+      return { amount, type: markedMatch[1] === "➕" ? "INCOME" : "EXPENSE" };
+    }
+  }
+
+  // 2) Fallback: the largest plain number anywhere in the text.
   const matches = text.match(/\d[\d\s.,]*\d|\d+/g) || [];
-  const numbers = matches
-    .map((m) => parseInt(m.replace(/[^\d]/g, ""), 10))
-    .filter((n) => Number.isFinite(n) && n > 0);
+  const numbers = matches.map(parseAmountToken).filter((n) => n);
   if (!numbers.length) return null;
-  return Math.max(...numbers);
+  return { amount: Math.max(...numbers), type: null };
 }
 
 function makeToken() {
@@ -84,18 +106,20 @@ async function getOrCreateUser(telegramId, firstName, username) {
   });
 }
 
-async function askCategory(chatId, telegramId, amount, note) {
-  const categories = await prisma.category.findMany({ where: { type: "EXPENSE" }, orderBy: { id: "asc" } });
+async function askCategory(chatId, telegramId, amount, note, type) {
+  const resolvedType = type || "EXPENSE";
+  const categories = await prisma.category.findMany({ where: { type: resolvedType }, orderBy: { id: "asc" } });
   if (!categories.length) {
-    return bot.sendMessage(chatId, "Hozircha chiqim kategoriyalari sozlanmagan. Avval Admin Panel orqali kategoriya qo'shing.");
+    return bot.sendMessage(chatId, "Hozircha bu turdagi kategoriyalar sozlanmagan. Avval Admin Panel orqali kategoriya qo'shing.");
   }
 
   const token = makeToken();
   pendingCategoryChoice.set(token, { telegramId, chatId, amount, note });
 
-  const buttons = categories.map((c) => [{ text: `${c.icon} ${c.name}`, callback_data: `expcat:${token}:${c.id}` }]);
+  const buttons = categories.map((c) => [{ text: `${c.icon} ${c.name}`, callback_data: `cat:${token}:${c.id}` }]);
+  const label = resolvedType === "INCOME" ? "Kirim" : "Chiqim";
 
-  await bot.sendMessage(chatId, `💸 ${formatAmount(amount, "UZS")} topildi.\n\nQaysi kategoriyaga tegishli?`, {
+  await bot.sendMessage(chatId, `💰 ${formatAmount(amount, "UZS")} (${label}) topildi.\n\nQaysi kategoriyaga tegishli?`, {
     reply_markup: { inline_keyboard: buttons },
   });
 }
@@ -113,29 +137,29 @@ bot.on("message", async (msg) => {
   // to'g'ridan-to'g'ri summa sifatida o'qiymiz.
   const awaiting = pendingAmountOnly.get(chatId);
   if (awaiting) {
-    const amount = extractAmount(text);
-    if (!amount) {
+    const parsed = extractAmount(text);
+    if (!parsed) {
       return bot.sendMessage(chatId, "Raqam topilmadi. Iltimos, faqat summani yuboring (masalan: 50000).");
     }
     pendingAmountOnly.delete(chatId);
     await getOrCreateUser(telegramId, msg.from.first_name, msg.from.username);
-    return askCategory(chatId, telegramId, amount, awaiting.note);
+    return askCategory(chatId, telegramId, parsed.amount, awaiting.note, parsed.type);
   }
 
-  const amount = extractAmount(text);
+  const parsed = extractAmount(text);
   await getOrCreateUser(telegramId, msg.from.first_name, msg.from.username);
 
-  if (!amount) {
+  if (!parsed) {
     pendingAmountOnly.set(chatId, { telegramId, note: text.slice(0, 200) });
     return bot.sendMessage(chatId, "Bu xabarda summani topa olmadim 🤔\nIltimos, summani raqam bilan yuboring (masalan: 50000).");
   }
 
-  await askCategory(chatId, telegramId, amount, text.slice(0, 200));
+  await askCategory(chatId, telegramId, parsed.amount, text.slice(0, 200), parsed.type);
 });
 
 bot.on("callback_query", async (query) => {
   const data = query.data || "";
-  if (!data.startsWith("expcat:")) return;
+  if (!data.startsWith("cat:")) return;
 
   const [, token, categoryIdStr] = data.split(":");
   const pending = pendingCategoryChoice.get(token);
@@ -152,7 +176,7 @@ bot.on("callback_query", async (query) => {
       data: {
         userId: user.id,
         amount: pending.amount,
-        type: "EXPENSE",
+        type: category.type,
         categoryId: category.id,
         note: pending.note,
       },
@@ -160,8 +184,9 @@ bot.on("callback_query", async (query) => {
 
     pendingCategoryChoice.delete(token);
 
+    const label = category.type === "INCOME" ? "kirim" : "chiqim";
     await bot.editMessageText(
-      `✅ ${formatAmount(pending.amount, "UZS")} (${category.icon} ${category.name}) chiqim sifatida saqlandi!`,
+      `✅ ${formatAmount(pending.amount, "UZS")} (${category.icon} ${category.name}) ${label} sifatida saqlandi!`,
       { chat_id: pending.chatId, message_id: query.message.message_id }
     );
     await bot.answerCallbackQuery(query.id);
